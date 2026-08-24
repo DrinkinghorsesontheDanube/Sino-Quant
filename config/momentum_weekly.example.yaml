@@ -1,0 +1,13 @@
+strategy:
+  name: momentum_top_n
+  lookback_days: 60
+  holdings: 15
+  rebalance: weekly
+
+backtest:
+  initial_cash: 1000000
+  commission_rate: 0.0003
+  minimum_commission: 5
+  stamp_duty_rate: 0.0005
+  slippage_rate: 0.0005
+  lot_size: 100
