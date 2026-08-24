@@ -1,7 +1,7 @@
 """Run a self-contained smoke test of the research-to-report workflow."""
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -27,5 +27,6 @@ if __name__ == "__main__":
     open_price = close.shift(1).bfill() * 1.001
     weights = top_n_momentum_weights(close, lookback_days=60, holdings=10, rebalance_every=5)
     result = DailyBacktester().run(open_price, close, weights)
-    print(performance_summary(result.equity_curve).map(lambda value: f"{value:.2%}" if abs(value) < 10 else f"{value:.2f}"))
+    summary = performance_summary(result.equity_curve)
+    print(summary.map(lambda value: f"{value:.2%}" if abs(value) < 10 else f"{value:.2f}"))
     print(f"成交笔数: {len(result.trades)}")

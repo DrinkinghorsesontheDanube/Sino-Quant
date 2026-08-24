@@ -1,19 +1,16 @@
+# Environment and build artifacts
 .venv/
+.vendor/
 __pycache__/
-.pytest_cache/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
+.env
+
+# Local data and generated reports
 data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
 reports/*
 !reports/.gitkeep
-.env
-data/raw/*
-data/processed/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-reports/real_momentum_*.csv
-.vendor/
-__pycache__/
-*.pyc

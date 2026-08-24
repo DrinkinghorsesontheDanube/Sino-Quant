@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import datetime as dt
 import sys
 from pathlib import Path
 
@@ -14,7 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 if (PROJECT_ROOT / ".vendor").exists():
     sys.path.insert(0, str(PROJECT_ROOT / ".vendor"))
 
-from ashare_quant import DailyBacktester
+from ashare_quant import BacktestConfig, DailyBacktester
 from ashare_quant.data import download_daily_history
 from ashare_quant.reporting import performance_summary
 from ashare_quant.strategies import top_n_momentum_weights
@@ -26,6 +28,27 @@ DEFAULT_SYMBOLS = [
     "300750", "600000", "600036", "600519", "601318",
     "601398", "601857", "601888", "601899", "603288",
 ]
+
+DEFAULT_CONFIG = PROJECT_ROOT / "config" / "momentum_weekly.example.yaml"
+_WEEKLY_CADENCE = {"weekly": 5, "monthly": 21}
+
+
+def load_config(path: Path) -> tuple[dict[str, object], dict[str, object], int]:
+    """Load the copyable strategy/backtest YAML into run parameters."""
+    import yaml
+
+    with path.open(encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle) or {}
+    strategy = cfg.get("strategy") or {}
+    backtest = cfg.get("backtest") or {}
+
+    rebalance = strategy.get("rebalance", 5)
+    if isinstance(rebalance, str):
+        rebalance = _WEEKLY_CADENCE.get(rebalance.strip().lower(), 5)
+    if not isinstance(rebalance, int) or rebalance < 1:
+        raise ValueError(f"invalid rebalance cadence in {path}: {strategy.get('rebalance')!r}")
+
+    return strategy, backtest, rebalance
 
 
 def build_price_panels(histories: dict[str, pd.DataFrame]) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -39,19 +62,37 @@ def build_price_panels(histories: dict[str, pd.DataFrame]) -> tuple[pd.DataFrame
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", default="20240102", help="inclusive YYYYMMDD (default: 20240102)")
-    parser.add_argument("--end", default="20260821", help="inclusive YYYYMMDD (default: 20260821)")
-    parser.add_argument("--refresh", action="store_true", help="redownload instead of reusing cached source data")
+    parser.add_argument("--end", default=dt.date.today().strftime("%Y%m%d"),
+                        help="inclusive YYYYMMDD (default: today)")
+    parser.add_argument(
+        "--refresh", action="store_true",
+        help="redownload instead of reusing cached source data",
+    )
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG),
+                        help=f"strategy/backtest YAML (default: {DEFAULT_CONFIG.name})")
     args = parser.parse_args()
+
+    strategy, backtest, rebalance_every = load_config(Path(args.config))
+    lookback_days = int(strategy.get("lookback_days", 60))
+    holdings = int(strategy.get("holdings", 10))
+    if lookback_days < 1 or holdings < 1:
+        raise ValueError("lookback_days and holdings must be positive")
+    config_fields = {f.name for f in dataclasses.fields(BacktestConfig)}
+    config = BacktestConfig(**{k: v for k, v in backtest.items() if k in config_fields})
 
     histories = download_daily_history(
         DEFAULT_SYMBOLS, args.start, args.end, PROJECT_ROOT / "data" / "raw", refresh=args.refresh
     )
     open_prices, close_prices = build_price_panels(histories)
-    if len(close_prices) <= 60:
-        raise RuntimeError(f"Only {len(close_prices)} common trading days; at least 61 are required.")
+    if len(close_prices) <= lookback_days:
+        raise RuntimeError(
+            f"Only {len(close_prices)} common trading days; at least {lookback_days + 1} are required."
+        )
 
-    weights = top_n_momentum_weights(close_prices, lookback_days=60, holdings=10, rebalance_every=5)
-    result = DailyBacktester().run(open_prices, close_prices, weights)
+    weights = top_n_momentum_weights(
+        close_prices, lookback_days=lookback_days, holdings=holdings, rebalance_every=rebalance_every
+    )
+    result = DailyBacktester(config).run(open_prices, close_prices, weights)
     summary = performance_summary(result.equity_curve)
 
     processed_dir = PROJECT_ROOT / "data" / "processed"
@@ -67,9 +108,13 @@ def main() -> None:
 
     print("数据源: AkShare / 腾讯财经, 前复权日线")
     print(f"股票池: {', '.join(DEFAULT_SYMBOLS)}")
-    print(f"有效区间: {close_prices.index[0]:%F} 至 {close_prices.index[-1]:%F} ({len(close_prices)} 个交易日)")
+    print(f"策略: 动量 top-{holdings}, lookback={lookback_days}, 调仓间隔={rebalance_every} 交易日")
+    print(
+        f"有效区间: {close_prices.index[0]:%F} 至 {close_prices.index[-1]:%F} "
+        f"({len(close_prices)} 个交易日)"
+    )
     percentage_metrics = {
-        "cumulative_return", "annualized_return", "annualized_volatility", "max_drawdown"
+        "cumulative_return", "annualized_return", "annualized_volatility", "max_drawdown", "turnover_rate"
     }
     for name, value in summary.items():
         print(f"{name}: {value:.2%}" if name in percentage_metrics else f"{name}: {value:.4f}")

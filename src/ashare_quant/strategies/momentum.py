@@ -16,7 +16,9 @@ def top_n_momentum_weights(
     returns = adjusted_close.pct_change(lookback_days)
     weights = pd.DataFrame(0.0, index=adjusted_close.index, columns=adjusted_close.columns)
     for row_number, date in enumerate(weights.index):
-        if row_number < lookback_days or row_number % rebalance_every:
+        # The first signal is emitted exactly at the lookback row, then every
+        # `rebalance_every` rows thereafter.
+        if row_number < lookback_days or (row_number - lookback_days) % rebalance_every:
             continue
         winners = returns.loc[date].dropna().nlargest(holdings).index
         if len(winners):

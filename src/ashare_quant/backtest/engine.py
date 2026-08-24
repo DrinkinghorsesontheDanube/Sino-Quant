@@ -32,6 +32,11 @@ class DailyBacktester:
     look-ahead bias.  The caller must set unavailable stocks to False in
     `tradable`; limit-up/down and suspension rules can therefore be supplied
     from a market-data layer without being hidden in this engine.
+
+    The equity curve carries ``buy_value``/``sell_value`` columns (gross
+    execution value per day, slippage included) so reporting can compute
+    one-sided turnover.  Each trade row records ``commission`` and ``tax``
+    separately; ``fee`` keeps the combined total for convenience.
     """
 
     def __init__(self, config: BacktestConfig | None = None) -> None:
@@ -59,17 +64,26 @@ class DailyBacktester:
         trades: list[dict[str, object]] = []
 
         for i, date in enumerate(dates):
+            buy_value = 0.0
+            sell_value = 0.0
             # The signal is known only after the previous close.
             if i > 0:
                 targets = target_weights.iloc[i - 1].clip(lower=0).fillna(0)
                 targets = targets / targets.sum() if targets.sum() > 0 else targets
-                cash, shares, buy_date = self._rebalance(
+                cash, shares, buy_date, buy_value, sell_value = self._rebalance(
                     date, open_prices.loc[date], targets, tradable.loc[date], cash, shares, buy_date, trades
                 )
 
             market_value = float((shares * close_prices.loc[date]).sum())
             records.append(
-                {"date": date, "cash": cash, "market_value": market_value, "equity": cash + market_value}
+                {
+                    "date": date,
+                    "cash": cash,
+                    "market_value": market_value,
+                    "equity": cash + market_value,
+                    "buy_value": buy_value,
+                    "sell_value": sell_value,
+                }
             )
 
         equity_curve = pd.DataFrame(records).set_index("date")
@@ -79,23 +93,37 @@ class DailyBacktester:
     def _rebalance(
         self, date: pd.Timestamp, prices: pd.Series, targets: pd.Series, tradable: pd.Series,
         cash: float, shares: pd.Series, buy_date: pd.Series, trades: list[dict[str, object]],
-    ) -> tuple[float, pd.Series, pd.Series]:
+    ) -> tuple[float, pd.Series, pd.Series, float, float]:
         current_equity = cash + float((shares * prices).sum())
         desired_value = targets * current_equity
         desired_shares = (desired_value / (prices * (1 + self.config.slippage_rate))).fillna(0)
         desired_shares = (desired_shares // self.config.lot_size * self.config.lot_size).astype("int64")
 
+        buy_value = 0.0
+        sell_value = 0.0
+
         # Sell first. T+1 prevents selling a position bought today, although
         # same-day buy/sell does not normally arise with one daily rebalance.
         for symbol in shares.index:
             quantity = max(0, shares[symbol] - desired_shares[symbol])
-            if quantity and tradable[symbol] and buy_date[symbol] < date:
+            if (
+                quantity
+                and tradable[symbol]
+                and buy_date[symbol] < date
+                and np.isfinite(prices[symbol])  # a NaN print would poison cash
+            ):
                 proceeds = quantity * prices[symbol] * (1 - self.config.slippage_rate)
                 fee = max(proceeds * self.config.commission_rate, self.config.minimum_commission)
                 tax = proceeds * self.config.stamp_duty_rate
                 cash += proceeds - fee - tax
                 shares[symbol] -= quantity
-                trades.append({"date": date, "symbol": symbol, "side": "SELL", "shares": quantity, "price": prices[symbol], "fee": fee + tax})
+                sell_value += proceeds
+                trades.append(
+                    {
+                        "date": date, "symbol": symbol, "side": "SELL", "shares": quantity,
+                        "price": prices[symbol], "commission": fee, "tax": tax, "fee": fee + tax,
+                    }
+                )
 
         # Buy in descending target priority. Cash is never allowed below zero.
         for symbol in targets.sort_values(ascending=False).index:
@@ -118,8 +146,14 @@ class DailyBacktester:
             cash -= gross + fee
             shares[symbol] += quantity
             buy_date[symbol] = date
-            trades.append({"date": date, "symbol": symbol, "side": "BUY", "shares": quantity, "price": prices[symbol], "fee": fee})
-        return cash, shares, buy_date
+            buy_value += gross
+            trades.append(
+                {
+                    "date": date, "symbol": symbol, "side": "BUY", "shares": quantity,
+                    "price": prices[symbol], "commission": fee, "tax": 0.0, "fee": fee,
+                }
+            )
+        return cash, shares, buy_date, buy_value, sell_value
 
     @staticmethod
     def _validate_inputs(*frames: pd.DataFrame) -> None:
@@ -129,5 +163,5 @@ class DailyBacktester:
         for frame in frames[1:]:
             if not reference.index.equals(frame.index) or not reference.columns.equals(frame.columns):
                 raise ValueError("all inputs must have identical dates and symbols")
-        if (reference <= 0).any().any():
-            raise ValueError("open prices must be positive")
+        if (reference <= 0).any().any() or reference.isna().any().any():
+            raise ValueError("open prices must be positive and free of missing values")

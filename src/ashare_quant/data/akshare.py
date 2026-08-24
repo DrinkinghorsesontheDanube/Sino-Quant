@@ -2,13 +2,40 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pandas as pd
 
-
 _REQUIRED_COLUMNS = ["open", "close"]
 _COLUMN_MAP = {"日期": "date", "开盘": "open", "收盘": "close", "成交量": "volume"}
+
+
+def _exchange_prefix(symbol: str) -> str:
+    """Map a six-digit code to the Tencent exchange prefix (sh/sz/bj).
+
+    Mirrors AkShare's own ``_normalize_tx_symbol`` prefix sets so the two
+    layers never disagree.
+    """
+    if symbol.startswith(("600", "601", "603", "605", "688", "900")):
+        return "sh"
+    if symbol.startswith(("430", "440", "830", "831", "832", "833", "839")):
+        return "bj"
+    return "sz"
+
+
+def _fetch_with_retry(fetch, retries: int = 3, backoff: float = 1.0):
+    """Run ``fetch`` up to ``retries`` times with exponential backoff."""
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return fetch()
+        except Exception as exc:  # transient network errors should not kill a run
+            last_error = exc
+            if attempt < retries - 1:
+                time.sleep(backoff * (2**attempt))
+    assert last_error is not None
+    raise last_error
 
 
 def download_daily_history(
@@ -42,9 +69,16 @@ def download_daily_history(
             # Tencent's interface is used here because it is publicly accessible
             # without a token and has been more reliable than the Eastmoney route
             # in proxy-restricted environments.  It returns English field names.
-            exchange_symbol = ("sh" if symbol.startswith("6") else "sz") + symbol
-            frame = ak.stock_zh_a_hist_tx(
-                symbol=exchange_symbol, start_date=start_date, end_date=end_date, adjust=adjust
+            # Bind the loop variable explicitly so the retry lambda cannot
+            # capture a late-bound value if the loop ever changes shape.
+            frame = _fetch_with_retry(
+                lambda symbol=symbol: ak.stock_zh_a_hist_tx(
+                    symbol=_exchange_prefix(symbol) + symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust=adjust,
+                    timeout=30,
+                )
             )
             frame = _normalize_history(frame, symbol)
             frame.reset_index().to_csv(cache_file, index=False, encoding="utf-8-sig")
