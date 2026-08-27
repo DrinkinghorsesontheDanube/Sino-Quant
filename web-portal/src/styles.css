@@ -1,0 +1,41 @@
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  background: #101014;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.brand {
+  padding: 18px 20px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.brand-main {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.brand-sub {
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.sider-foot {
+  margin-top: auto;
+  padding: 14px 20px;
+  font-size: 12px;
+  opacity: 0.45;
+}
+
+.page-title {
+  margin: 4px 0 16px;
+  font-size: 20px;
+  font-weight: 650;
+}

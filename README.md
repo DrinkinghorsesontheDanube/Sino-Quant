@@ -53,4 +53,4 @@ python scripts/run_real_backtest.py --start 20240102
 
 ## Web API（可选扩展）
 
-本仓库自带只读 HTTP API 层：`pip install -e ".[api]"` 后由兄弟项目 `../quant-gateway` 聚合暴露（默认 `127.0.0.1:8600`，前缀 `/api/a-share`），配套统一前端在 `../web-portal`。详见 gateway / portal 各自的 README。
+本仓库自带只读 HTTP API 层：`pip install -e ".[api]"` 后由仓内项目 `quant-gateway/` 聚合暴露（默认 `127.0.0.1:8600`，前缀 `/api/a-share`），配套统一前端在 `web-portal/`。详见 gateway / portal 各自的 README。
