@@ -55,7 +55,7 @@ def list_runs(reports_dir: Path) -> list[dict[str, object]]:
         )
         runs.append(
             {
-                "run_id": f"{start}_{end}",
+                "run_id": f"{start}_{end}__{match.group('strategy')}",
                 "strategy": match.group("strategy"),
                 "start": start,
                 "end": end,
@@ -67,14 +67,33 @@ def list_runs(reports_dir: Path) -> list[dict[str, object]]:
 
 
 def _run_paths(reports_dir: Path, run_id: str) -> tuple[str, Path] | None:
-    """Resolve a run id back to its (strategy, equity csv) pair."""
+    """Resolve a composite run id back to its (strategy, equity csv) pair.
+
+    Accepts ``"{start}_{end}__{strategy}"`` (canonical, from ``list_runs``)
+    and, for convenience, a bare ``"{start}_{end}"`` when exactly one
+    strategy matches that window.
+    """
+    composite = re.fullmatch(r"(?P<dates>\d{8}_\d{8})__(?P<strategy>.+)", run_id)
+    if composite:
+        for csv_path in reports_dir.glob(
+            f"{composite.group('strategy')}_equity_{composite.group('dates')}.csv"
+        ):
+            if RUN_RE.match(csv_path.name):
+                return composite.group("strategy"), csv_path
+        return None
     if not re.fullmatch(r"\d{8}_\d{8}", run_id):
         return None
-    for csv_path in reports_dir.glob(f"*_equity_{run_id}.csv"):
-        match = RUN_RE.match(csv_path.name)
-        if match:
-            return match.group("strategy"), csv_path
-    return None
+    matches = [
+        (RUN_RE.match(p.name).group("strategy"), p)
+        for p in reports_dir.glob(f"*_equity_{run_id}.csv")
+        if RUN_RE.match(p.name)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _dates(run_id: str) -> tuple[str, str] | None:
+    match = re.match(r"(\d{8})_(\d{8})", run_id)
+    return (match.group(1), match.group(2)) if match else None
 
 
 def load_summary(reports_dir: Path, run_id: str) -> dict[str, object] | None:
@@ -106,8 +125,8 @@ def load_summary(reports_dir: Path, run_id: str) -> dict[str, object] | None:
     return {
         "run_id": run_id,
         "strategy": strategy,
-        "start": run_id.split("_")[0],
-        "end": run_id.split("_")[1],
+        "start": _dates(run_id)[0],
+        "end": _dates(run_id)[1],
         "metrics": metrics,
         "curve": curve,
     }
@@ -122,8 +141,9 @@ def load_trades(reports_dir: Path, run_id: str) -> dict[str, object] | None:
 
     import pandas as pd
 
+    start, end = _dates(run_id)
     frame = pd.read_csv(
-        reports_dir / f"{strategy}_trades_{run_id}.csv",
+        reports_dir / f"{strategy}_trades_{start}_{end}.csv",
         encoding="utf-8-sig",
     )
     columns = ["date", "symbol", "side", "shares", "price", "commission", "tax", "fee"]

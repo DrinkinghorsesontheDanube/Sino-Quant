@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, h } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NConfigProvider, NLayout, NLayoutSider, NMenu, darkTheme, dateZh, zhCN, type MenuOption } from 'naive-ui'
+import { NConfigProvider, NLayout, NLayoutSider, NMenu, darkTheme, type MenuOption } from 'naive-ui'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,18 +32,16 @@ const activeKey = computed(() => (route.path.startsWith('/a-share') ? '/a-share'
 function onMenuSelect(key: string) {
   if (key.startsWith('/')) void router.push(key)
 }
-
-const brand = h('div', { class: 'brand' }, [
-  h('span', { class: 'brand-main' }, 'Quant Portal'),
-  h('span', { class: 'brand-sub' }, '多板块量化门户'),
-])
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :locale="zhCN" :date-locale="dateZh" class="app-root">
+  <n-config-provider :theme="darkTheme">
     <n-layout has-sider position="absolute">
-      <n-layout-sider bordered :width="230" collapse-mode="width" content-style="display:flex; flex-direction:column;">
-        <component :is="brand" />
+      <n-layout-sider bordered :width="230" content-style="display:flex; flex-direction:column;">
+        <div class="brand">
+          <span class="brand-main">Quant Portal</span>
+          <span class="brand-sub">多板块量化门户</span>
+        </div>
         <n-menu :options="menuOptions" :value="activeKey" @update:value="onMenuSelect" />
         <div class="sider-foot">V1 · 只读看结果</div>
       </n-layout-sider>
@@ -54,6 +52,26 @@ const brand = h('div', { class: 'brand' }, [
   </n-config-provider>
 </template>
 
-<style scoped>
-.app-root :deep(.layout) { background: transparent; }
+<style>
+.brand {
+  padding: 18px 20px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-main {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.brand-sub {
+  font-size: 12px;
+  opacity: 0.55;
+}
+.sider-foot {
+  margin-top: auto;
+  padding: 14px 20px;
+  font-size: 12px;
+  opacity: 0.45;
+}
 </style>

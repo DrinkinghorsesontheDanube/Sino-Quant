@@ -56,7 +56,7 @@ def test_list_runs_discovers_and_sorts(reports_dir: Path) -> None:
     runs = service.list_runs(reports_dir)
     assert len(runs) == 1
     run = runs[0]
-    assert run["run_id"] == "20240102_20260821"
+    assert run["run_id"] == "20240102_20260821__real_momentum"
     assert run["strategy"] == "real_momentum"
     assert run["has_trades"] is True
 
@@ -99,7 +99,7 @@ def test_router_end_to_end(reports_dir: Path, monkeypatch: pytest.MonkeyPatch) -
 
     listing = client.get("/api/a-share/reports")
     assert listing.status_code == 200
-    assert listing.json()["runs"][0]["run_id"] == "20240102_20260821"
+    assert listing.json()["runs"][0]["run_id"] == "20240102_20260821__real_momentum"
 
     summary = client.get("/api/a-share/runs/20240102_20260821/summary")
     assert summary.status_code == 200

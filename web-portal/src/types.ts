@@ -49,3 +49,25 @@ export interface TradesPayload {
   count: number
   trades: TradeRow[]
 }
+
+export interface BacktestParams {
+  start: string
+  end: string
+  lookback: number
+  holdings: number
+  rebalance: number
+  source: 'synthetic' | 'real'
+}
+
+export interface JobStatus {
+  job_id: string
+  kind: string
+  status: 'running' | 'succeeded' | 'failed'
+  error: string | null
+  result: {
+    run_id: string
+    metrics: Record<string, number | null>
+    trades: number
+    days: number
+  } | null
+}
