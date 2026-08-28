@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -16,9 +16,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install project with dev extras
-        run: pip install -e ".[dev]"
+      - name: Install project with dev + api extras (covers the gateway)
+        run: pip install -e ".[dev,api]"
       - name: Run test suite
         run: pytest -q
       - name: Lint with ruff
         run: ruff check .
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web-portal/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check and build
+        run: npm run build

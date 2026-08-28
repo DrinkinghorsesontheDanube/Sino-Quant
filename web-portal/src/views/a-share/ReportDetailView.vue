@@ -46,6 +46,12 @@ const metricCards = computed(() => {
   ]
 })
 
+const paramsLine = computed(() => {
+  const params = summary.value?.params
+  if (!params) return null
+  return `动量回看 ${params.lookback ?? '—'} 日 · 持仓 ${params.holdings ?? '—'} 只 · 调仓间隔 ${params.rebalance ?? '—'} 交易日`
+})
+
 const tradeColumns = computed<DataTableColumns<TradeRow>>(() => [
   { title: '日期', key: 'date', width: 120, render: (row) => row.date?.slice(0, 10) ?? '—' },
   { title: '代码', key: 'symbol', width: 100 },
@@ -159,6 +165,9 @@ onBeforeUnmount(() => {
   <div>
     <n-back-top :right="40" />
     <h1 class="page-title">回测详情 · {{ runId }}</h1>
+    <p v-if="paramsLine" style="opacity: 0.6; margin: -6px 0 14px">
+      {{ paramsLine }}<template v-if="summary?.created_at"> · 生成于 {{ summary.created_at }}</template>
+    </p>
 
     <n-spin :show="loading">
       <n-alert v-if="error" type="error" style="margin-bottom: 16px">{{ error }}</n-alert>

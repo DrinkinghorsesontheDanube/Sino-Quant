@@ -30,6 +30,9 @@ export interface RunSummary {
   strategy: string
   start: string
   end: string
+  source?: string
+  created_at?: string
+  params?: Record<string, number | string> | null
   metrics: Metrics
   curve: CurvePoint[]
 }

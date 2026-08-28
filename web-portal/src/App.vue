@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NConfigProvider, NLayout, NLayoutSider, NMenu, darkTheme, type MenuOption } from 'naive-ui'
+import {
+  NConfigProvider,
+  NLayout,
+  NLayoutSider,
+  NMenu,
+  NMessageProvider,
+  darkTheme,
+  type MenuOption,
+} from 'naive-ui'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,19 +44,22 @@ function onMenuSelect(key: string) {
 
 <template>
   <n-config-provider :theme="darkTheme">
-    <n-layout has-sider position="absolute">
-      <n-layout-sider bordered :width="230" content-style="display:flex; flex-direction:column;">
-        <div class="brand">
-          <span class="brand-main">Quant Portal</span>
-          <span class="brand-sub">多板块量化门户</span>
-        </div>
-        <n-menu :options="menuOptions" :value="activeKey" @update:value="onMenuSelect" />
-        <div class="sider-foot">V1 · 只读看结果</div>
-      </n-layout-sider>
-      <n-layout content-style="padding: 20px 28px; overflow-y: auto;">
-        <router-view />
+    <!-- useMessage() 等反馈组件依赖这里的 Provider，缺失会导致页面组件挂载失败 -->
+    <n-message-provider>
+      <n-layout has-sider position="absolute">
+        <n-layout-sider bordered :width="230" content-style="display:flex; flex-direction:column;">
+          <div class="brand">
+            <span class="brand-main">Quant Portal</span>
+            <span class="brand-sub">多板块量化门户</span>
+          </div>
+          <n-menu :options="menuOptions" :value="activeKey" @update:value="onMenuSelect" />
+          <div class="sider-foot">V1 · 只读看结果</div>
+        </n-layout-sider>
+        <n-layout content-style="padding: 20px 28px; overflow-y: auto;">
+          <router-view />
+        </n-layout>
       </n-layout>
-    </n-layout>
+    </n-message-provider>
   </n-config-provider>
 </template>
 

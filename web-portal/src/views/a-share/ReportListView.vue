@@ -31,6 +31,7 @@ const showModal = ref(false)
 const submitting = ref(false)
 const job = ref<JobStatus | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollFailures = 0
 
 const DEFAULT_PARAMS: BacktestParams = {
   start: '20240102',
@@ -108,14 +109,17 @@ async function submit() {
   syncDates()
   submitting.value = true
   job.value = null
+  pollFailures = 0
   try {
     const { job_id } = await postBacktest(form.value)
     pollTimer = setInterval(async () => {
       try {
         job.value = await fetchJob(job_id)
+        pollFailures = 0
         if (job.value.status === 'succeeded') {
           stopPolling()
           submitting.value = false
+          showModal.value = false
           message.success(`回测完成：${job.value.result?.trades ?? 0} 笔成交，已加入报告列表`)
           await load()
         } else if (job.value.status === 'failed') {
@@ -123,7 +127,13 @@ async function submit() {
           submitting.value = false
         }
       } catch {
-        /* 网络抖动时下一轮轮询会重试 */
+        // 网关重启会丢失内存任务，状态查询持续失败时不要让弹窗永远卡住。
+        pollFailures += 1
+        if (pollFailures >= 10) {
+          stopPolling()
+          submitting.value = false
+          message.error('无法查询回测任务状态（网关可能已重启），请稍后在报告列表确认结果')
+        }
       }
     }, 1200)
   } catch (err) {

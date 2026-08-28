@@ -4,10 +4,9 @@ Vue 3 + Vite + TypeScript + Naive UI + ECharts。每个量化板块在 `src/view
 
 ## 运行
 
-前置：仓库内 `../quant-gateway` 已在 `127.0.0.1:8600` 运行；本机需 Node ≥ 18（可用便携版 `..\..\_tools\node22`，把它加入 PATH 即可）。
+前置：仓库根的网关已在 `127.0.0.1:8600` 运行（见 `../quant-gateway/README.md`）；本机需 Node ≥ 18。
 
 ```powershell
-$env:Path = "C:\Users\Maste\Desktop\Demo\_tools\node22;$env:Path"   # 若使用便携 Node
 npm install          # 首次
 npm run dev          # http://localhost:5173
 ```
