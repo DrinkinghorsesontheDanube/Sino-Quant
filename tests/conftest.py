@@ -8,6 +8,7 @@ ACLs works everywhere, so we shadow the built-in fixture by name.
 
 from __future__ import annotations
 
+import json
 import shutil
 import uuid
 from pathlib import Path
@@ -29,7 +30,9 @@ def tmp_path() -> Path:
 
 @pytest.fixture()
 def reports_dir(tmp_path: Path) -> Path:
-    """One run in the on-disk report naming scheme, for API tests."""
+    """One run in the on-disk report layout (directory + meta.json), for API tests."""
+    run_dir = tmp_path / "20240102_20260821__real_momentum"
+    run_dir.mkdir()
     curve = pd.DataFrame(
         {
             "cash": [100.0, 50.0, 40.0],
@@ -56,9 +59,17 @@ def reports_dir(tmp_path: Path) -> Path:
             "turnover_rate": 2.5,
         }
     )
-    stem = "real_momentum"
-    start, end = "20240102", "20260821"
-    curve.to_csv(tmp_path / f"{stem}_equity_{start}_{end}.csv", encoding="utf-8-sig")
-    trades.to_csv(tmp_path / f"{stem}_trades_{start}_{end}.csv", index=False, encoding="utf-8-sig")
-    summary.to_frame("value").to_csv(tmp_path / f"{stem}_summary_{start}_{end}.csv", encoding="utf-8-sig")
+    curve.to_csv(run_dir / "equity.csv", encoding="utf-8-sig")
+    trades.to_csv(run_dir / "trades.csv", index=False, encoding="utf-8-sig")
+    summary.to_frame("value").to_csv(run_dir / "summary.csv", encoding="utf-8-sig")
+    meta = {
+        "run_id": "20240102_20260821__real_momentum",
+        "strategy": "real_momentum",
+        "start": "20240102",
+        "end": "20260821",
+        "source": "real",
+        "created_at": "2026-08-28 10:00:00",
+        "params": {"lookback": 60, "holdings": 10, "rebalance": 5},
+    }
+    (run_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     return tmp_path

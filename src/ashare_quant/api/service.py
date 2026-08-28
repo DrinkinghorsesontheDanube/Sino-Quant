@@ -1,132 +1,91 @@
-"""Read-only query layer over the CSV reports written by the backtest scripts.
+"""Read-only query layer over per-run report directories.
 
-The scripts persist three siblings per run inside ``reports/``::
+The shared pipeline persists one directory per run inside ``reports/``::
 
-    {strategy}_equity_{start}_{end}.csv   equity curve (date-indexed)
-    {strategy}_trades_{start}_{end}.csv   trade blotter
-    {strategy}_summary_{start}_{end}.csv  metric name / value pairs
+    {start}_{end}__{strategy}/
+    ├── meta.json     # params, universe, fees, git commit, created_at
+    ├── equity.csv    # date-indexed equity curve
+    ├── trades.csv    # trade blotter
+    └── summary.csv   # metric name / value pairs
 
-A *run id* is ``"{start}_{end}"``, which uniquely identifies the backtest
-window produced by the current strategy set. All functions return
-JSON-ready primitives (dates as ISO strings, NaN replaced by ``None``).
+The directory name is the *run id*.  All functions return JSON-ready
+primitives (dates as ISO strings, NaN replaced by ``None``).
 """
 
 from __future__ import annotations
 
-import math
+import json
 import re
-from datetime import date, datetime
 from pathlib import Path
 
-RUN_RE = re.compile(r"^(?P<strategy>.+)_equity_(?P<start>\d{8})_(?P<end>\d{8})\.csv$")
+from ashare_quant.serialize import iso, number
+
+# Run ids are directory names: digits/letters/underscores only, no dots or
+# separators, so a crafted id cannot escape the reports directory.
+_RUN_ID_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
-def _num(value: object) -> float | None:
-    """Convert numeric values to float, mapping NaN/None to None."""
-    try:
-        number = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+def _run_dir(reports_dir: Path, run_id: str) -> Path | None:
+    if not _RUN_ID_RE.fullmatch(run_id):
         return None
-    return number if math.isfinite(number) else None
+    path = reports_dir / run_id
+    return path if path.is_dir() and (path / "meta.json").is_file() else None
 
 
-def _iso(value: object) -> str | None:
-    """Format Timestamp/date/str values as an ISO date or datetime string."""
-    if isinstance(value, datetime):
-        return value.isoformat(sep=" ")
-    if isinstance(value, date):
-        return value.isoformat()
-    return str(value) if value is not None else None
+def _read_meta(run_dir: Path) -> dict[str, object]:
+    try:
+        return json.loads(run_dir.joinpath("meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def list_runs(reports_dir: Path) -> list[dict[str, object]]:
     """Enumerate backtest runs found on disk, newest period first."""
     runs: list[dict[str, object]] = []
-    for csv_path in reports_dir.glob("*_equity_*.csv"):
-        match = RUN_RE.match(csv_path.name)
-        if not match:
-            continue
-        start, end = match.group("start"), match.group("end")
-        trades_csv = csv_path.with_name(
-            f"{match.group('strategy')}_trades_{start}_{end}.csv"
-        )
-        summary_csv = csv_path.with_name(
-            f"{match.group('strategy')}_summary_{start}_{end}.csv"
-        )
+    for meta_path in reports_dir.glob("*/meta.json"):
+        meta = _read_meta(meta_path.parent)
         runs.append(
             {
-                "run_id": f"{start}_{end}__{match.group('strategy')}",
-                "strategy": match.group("strategy"),
-                "start": start,
-                "end": end,
-                "has_trades": trades_csv.exists(),
-                "created_at": datetime.fromtimestamp(csv_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "run_id": meta_path.parent.name,
+                "strategy": str(meta.get("strategy", "")),
+                "start": str(meta.get("start", "")),
+                "end": str(meta.get("end", "")),
+                "source": str(meta.get("source", "")),
+                "created_at": str(meta.get("created_at", "")),
+                "params": meta.get("params", {}),
+                "has_trades": (meta_path.parent / "trades.csv").is_file(),
             }
         )
     return sorted(runs, key=lambda item: (str(item["start"]), str(item["end"])), reverse=True)
 
 
-def _run_paths(reports_dir: Path, run_id: str) -> tuple[str, Path] | None:
-    """Resolve a composite run id back to its (strategy, equity csv) pair.
-
-    Accepts ``"{start}_{end}__{strategy}"`` (canonical, from ``list_runs``)
-    and, for convenience, a bare ``"{start}_{end}"`` when exactly one
-    strategy matches that window.
-    """
-    composite = re.fullmatch(r"(?P<dates>\d{8}_\d{8})__(?P<strategy>.+)", run_id)
-    if composite:
-        for csv_path in reports_dir.glob(
-            f"{composite.group('strategy')}_equity_{composite.group('dates')}.csv"
-        ):
-            if RUN_RE.match(csv_path.name):
-                return composite.group("strategy"), csv_path
-        return None
-    if not re.fullmatch(r"\d{8}_\d{8}", run_id):
-        return None
-    matches = [
-        (RUN_RE.match(p.name).group("strategy"), p)
-        for p in reports_dir.glob(f"*_equity_{run_id}.csv")
-        if RUN_RE.match(p.name)
-    ]
-    return matches[0] if len(matches) == 1 else None
-
-
-def _dates(run_id: str) -> tuple[str, str] | None:
-    match = re.match(r"(\d{8})_(\d{8})", run_id)
-    return (match.group(1), match.group(2)) if match else None
-
-
 def load_summary(reports_dir: Path, run_id: str) -> dict[str, object] | None:
-    """Metrics plus the daily equity/drawdown curve for one run."""
-    resolved = _run_paths(reports_dir, run_id)
-    if resolved is None:
+    """Metrics, the daily equity/drawdown curve and the run parameters."""
+    run_dir = _run_dir(reports_dir, run_id)
+    if run_dir is None:
         return None
-    strategy, equity_csv = resolved
-    stem = equity_csv.name[: -len(".csv")]
+    meta = _read_meta(run_dir)
 
     import pandas as pd
 
-    curve_frame = pd.read_csv(equity_csv, index_col=0, parse_dates=True, encoding="utf-8-sig")
-    summary_frame = pd.read_csv(
-        reports_dir / f"{stem.replace('_equity_', '_summary_')}.csv",
-        index_col=0,
-        encoding="utf-8-sig",
-    )
+    curve_frame = pd.read_csv(run_dir / "equity.csv", index_col=0, parse_dates=True, encoding="utf-8-sig")
+    summary_frame = pd.read_csv(run_dir / "summary.csv", index_col=0, encoding="utf-8-sig")
 
     peak = curve_frame["equity"].cummax()
     drawdown = (curve_frame["equity"] / peak - 1.0).fillna(0.0)
     curve = [
-        {"date": _iso(idx), "equity": _num(val), "drawdown": _num(dd)}
-        for idx, val, dd in zip(curve_frame.index, curve_frame["equity"], drawdown)
+        {"date": iso(idx), "equity": number(val), "drawdown": number(dd)}
+        for idx, val, dd in zip(curve_frame.index, curve_frame["equity"], drawdown, strict=True)
     ]
-    metrics = {
-        str(name): _num(value) for name, value in summary_frame.iloc[:, 0].items()
-    }
+    metrics = {str(name): number(value) for name, value in summary_frame.iloc[:, 0].items()}
     return {
         "run_id": run_id,
-        "strategy": strategy,
-        "start": _dates(run_id)[0],
-        "end": _dates(run_id)[1],
+        "strategy": meta.get("strategy", ""),
+        "start": meta.get("start", ""),
+        "end": meta.get("end", ""),
+        "source": meta.get("source", ""),
+        "created_at": meta.get("created_at", ""),
+        "params": meta.get("params", {}),
         "metrics": metrics,
         "curve": curve,
     }
@@ -134,26 +93,21 @@ def load_summary(reports_dir: Path, run_id: str) -> dict[str, object] | None:
 
 def load_trades(reports_dir: Path, run_id: str) -> dict[str, object] | None:
     """The full trade blotter for one run."""
-    resolved = _run_paths(reports_dir, run_id)
-    if resolved is None:
+    run_dir = _run_dir(reports_dir, run_id)
+    if run_dir is None or not (run_dir / "trades.csv").is_file():
         return None
-    strategy = resolved[0]
 
     import pandas as pd
 
-    start, end = _dates(run_id)
-    frame = pd.read_csv(
-        reports_dir / f"{strategy}_trades_{start}_{end}.csv",
-        encoding="utf-8-sig",
-    )
+    frame = pd.read_csv(run_dir / "trades.csv", encoding="utf-8-sig")
     columns = ["date", "symbol", "side", "shares", "price", "commission", "tax", "fee"]
     trades = []
     for row in frame.to_dict("records"):
-        record = {}
+        record: dict[str, object] = {}
         for column in columns:
             value = row.get(column)
-            record[column] = _num(value) if column not in ("date", "symbol", "side") else (
-                str(row.get(column)) if row.get(column) is not None else None
+            record[column] = number(value) if column not in ("date", "symbol", "side") else (
+                str(value) if value is not None else None
             )
         trades.append(record)
     return {"count": len(trades), "trades": trades}

@@ -46,11 +46,13 @@ def test_submit_and_complete_synthetic_backtest(client, reports_dir) -> None:
 
     job = _wait_for_job(client, job_id)
     assert job["status"] == "succeeded", job["error"]
-    assert job["result"]["run_id"].startswith("20240101_20241231__web_momentum_")
+    assert job["result"]["run_id"].startswith("20240101_20241231__momentum")
     assert job["result"]["trades"] > 0
 
     listing = client.get("/api/a-share/reports").json()["runs"]
     assert job["result"]["run_id"] in {r["run_id"] for r in listing}
+    listed = next(r for r in listing if r["run_id"] == job["result"]["run_id"])
+    assert listed["params"]["lookback"] == 60
 
     summary = client.get(f"/api/a-share/runs/{job['result']['run_id']}/summary")
     assert summary.status_code == 200

@@ -9,7 +9,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ashare_quant.api import jobs, runner, service
+from ashare_quant import pipeline
+from ashare_quant.api import jobs, service
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -31,6 +32,12 @@ class BacktestBody(BaseModel):
     holdings: int = 10
     rebalance: int | str = 5
     source: str = "synthetic"
+
+    def to_params(self) -> pipeline.RunParams:
+        return pipeline.RunParams(
+            start=self.start, end=self.end, lookback=self.lookback,
+            holdings=self.holdings, rebalance=self.rebalance, source=self.source,
+        )
 
 
 def create_router() -> APIRouter:
@@ -59,15 +66,17 @@ def create_router() -> APIRouter:
 
     @router.post("/backtests", status_code=202)
     def post_backtest(body: BacktestBody) -> dict[str, object]:
-        request = runner.BacktestRequest(**body.model_dump())
+        params = body.to_params()
         try:
-            request.validate()
+            params.validate()
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             job = jobs.submit(
                 "backtest",
-                lambda: runner.run_backtest(request, _reports_dir(), _data_cache_dir()),
+                lambda: pipeline.run_backtest(
+                    params, _reports_dir(), _data_cache_dir(), trigger="web"
+                ).public(),
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
