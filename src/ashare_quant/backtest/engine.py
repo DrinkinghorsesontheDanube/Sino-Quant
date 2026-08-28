@@ -29,9 +29,12 @@ class DailyBacktester:
 
     `target_weights` must use the same index/columns as price data.  A target
     generated at date T is executed at T+1's open, preventing close-price
-    look-ahead bias.  The caller must set unavailable stocks to False in
-    `tradable`; limit-up/down and suspension rules can therefore be supplied
-    from a market-data layer without being hidden in this engine.
+    look-ahead bias.  `tradable` marks stocks that cannot trade at all today
+    (suspensions, missing prints); optional `buyable`/`sellable` add
+    directional restrictions (a stock at limit-up cannot be bought, one at
+    limit-down cannot be sold).  A symbol trades only where
+    ``tradable & buyable & sellable`` all hold, so these rules live in the
+    market-data layer instead of being hidden inside the engine.
 
     The equity curve carries ``buy_value``/``sell_value`` columns (gross
     execution value per day, slippage included) so reporting can compute
@@ -48,14 +51,22 @@ class DailyBacktester:
         close_prices: pd.DataFrame,
         target_weights: pd.DataFrame,
         tradable: pd.DataFrame | None = None,
+        buyable: pd.DataFrame | None = None,
+        sellable: pd.DataFrame | None = None,
     ) -> BacktestResult:
         self._validate_inputs(open_prices, close_prices, target_weights)
         dates, symbols = open_prices.index, open_prices.columns
-        tradable = (
-            pd.DataFrame(True, index=dates, columns=symbols)
-            if tradable is None
-            else tradable.reindex(index=dates, columns=symbols).fillna(False).astype(bool)
-        )
+
+        def _mask(frame: pd.DataFrame | None) -> pd.DataFrame:
+            return (
+                pd.DataFrame(True, index=dates, columns=symbols)
+                if frame is None
+                else frame.reindex(index=dates, columns=symbols).fillna(False).astype(bool)
+            )
+
+        tradable = _mask(tradable)
+        buyable = _mask(buyable)
+        sellable = _mask(sellable)
 
         cash = self.config.initial_cash
         shares = pd.Series(0, index=symbols, dtype="int64")
@@ -71,7 +82,8 @@ class DailyBacktester:
                 targets = target_weights.iloc[i - 1].clip(lower=0).fillna(0)
                 targets = targets / targets.sum() if targets.sum() > 0 else targets
                 cash, shares, buy_date, buy_value, sell_value = self._rebalance(
-                    date, open_prices.loc[date], targets, tradable.loc[date], cash, shares, buy_date, trades
+                    date, open_prices.loc[date], targets, tradable.loc[date],
+                    buyable.loc[date], sellable.loc[date], cash, shares, buy_date, trades,
                 )
 
             market_value = float((shares * close_prices.loc[date]).sum())
@@ -92,6 +104,7 @@ class DailyBacktester:
 
     def _rebalance(
         self, date: pd.Timestamp, prices: pd.Series, targets: pd.Series, tradable: pd.Series,
+        buyable: pd.Series, sellable: pd.Series,
         cash: float, shares: pd.Series, buy_date: pd.Series, trades: list[dict[str, object]],
     ) -> tuple[float, pd.Series, pd.Series, float, float]:
         current_equity = cash + float((shares * prices).sum())
@@ -109,6 +122,7 @@ class DailyBacktester:
             if (
                 quantity
                 and tradable[symbol]
+                and sellable[symbol]
                 and buy_date[symbol] < date
                 and np.isfinite(prices[symbol])  # a NaN print would poison cash
             ):
@@ -128,7 +142,7 @@ class DailyBacktester:
         # Buy in descending target priority. Cash is never allowed below zero.
         for symbol in targets.sort_values(ascending=False).index:
             quantity = max(0, desired_shares[symbol] - shares[symbol])
-            if not quantity or not tradable[symbol] or not np.isfinite(prices[symbol]):
+            if not quantity or not tradable[symbol] or not buyable[symbol] or not np.isfinite(prices[symbol]):
                 continue
             unit_cost = prices[symbol] * (1 + self.config.slippage_rate)
             affordable = int(cash / (unit_cost * (1 + self.config.commission_rate)))
@@ -156,12 +170,14 @@ class DailyBacktester:
         return cash, shares, buy_date, buy_value, sell_value
 
     @staticmethod
-    def _validate_inputs(*frames: pd.DataFrame) -> None:
-        reference = frames[0]
+    def _validate_inputs(open_prices: pd.DataFrame, close_prices: pd.DataFrame,
+                         target_weights: pd.DataFrame) -> None:
+        reference = open_prices
         if reference.empty or not reference.index.is_monotonic_increasing:
             raise ValueError("price index must be non-empty and ordered by date")
-        for frame in frames[1:]:
+        for frame in (close_prices, target_weights):
             if not reference.index.equals(frame.index) or not reference.columns.equals(frame.columns):
                 raise ValueError("all inputs must have identical dates and symbols")
-        if (reference <= 0).any().any() or reference.isna().any().any():
-            raise ValueError("open prices must be positive and free of missing values")
+        for name, frame in (("open", open_prices), ("close", close_prices)):
+            if (frame <= 0).any().any() or frame.isna().any().any():
+                raise ValueError(f"{name} prices must be positive and free of missing values")

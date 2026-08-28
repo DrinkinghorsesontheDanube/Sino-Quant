@@ -38,16 +38,56 @@ def test_t_plus_one_blocks_same_day_sell() -> None:
     prices = pd.Series([10.0], index=["A"])
     targets = pd.Series([0.0], index=["A"])  # exit signal
     tradable = pd.Series([True], index=["A"])
+    buyable = pd.Series([True], index=["A"])
+    sellable = pd.Series([True], index=["A"])
     shares = pd.Series([100], index=["A"], dtype="int64")
     buy_date = pd.Series([date], index=["A"], dtype="datetime64[ns]")  # bought TODAY
     trades: list[dict[str, object]] = []
 
     cash, out_shares, _, _, sell_value = DailyBacktester()._rebalance(
-        date, prices, targets, tradable, 0.0, shares, buy_date, trades
+        date, prices, targets, tradable, buyable, sellable, 0.0, shares, buy_date, trades
     )
     assert out_shares["A"] == 100  # sell blocked by T+1
     assert sell_value == 0.0
     assert trades == []
+
+
+def test_limit_up_blocks_buy_but_allows_sell() -> None:
+    # Buy signal on day 1 executes day 2; day 2 is limit-up so the buy is blocked.
+    dates = pd.bdate_range("2024-01-02", periods=3)
+    prices = _single(dates, [10.0, 10.0, 10.0])
+    targets = _single(dates, [1.0, 1.0, 1.0])
+    buyable = _single(dates, [True, False, True])
+    result = DailyBacktester().run(prices, prices, targets, buyable=buyable)
+
+    buys = result.trades[result.trades["side"] == "BUY"]
+    # Day-3 buys come from the day-2 signal (still all-in), so the position
+    # simply enters one day late instead of never.
+    assert list(buys["date"]) == [dates[2]]
+    assert result.equity_curve["cash"].iloc[1] == 1_000_000.0
+
+
+def test_limit_down_blocks_sell_but_allows_buy() -> None:
+    dates = pd.bdate_range("2024-01-02", periods=3)
+    prices = _single(dates, [10.0, 10.0, 10.0])
+    targets = _single(dates, [1.0, 1.0, 0.0])
+    sellable = _single(dates, [True, True, False])  # day-3 open is limit-down
+    result = DailyBacktester().run(prices, prices, targets, sellable=sellable)
+
+    sells = result.trades[result.trades["side"] == "SELL"]
+    assert sells.empty  # the exit would execute on the blocked day, position is kept
+    buys = result.trades[result.trades["side"] == "BUY"]
+    assert not buys.empty
+
+
+def test_nan_close_price_rejected_at_validation() -> None:
+    dates = pd.bdate_range("2024-01-02", periods=3)
+    open_prices = _single(dates, [10.0, 10.0, 10.0])
+    close_prices = _single(dates, [10.0, 10.0, np.nan])
+    targets = _single(dates, [1.0, 1.0, 1.0])
+
+    with pytest.raises(ValueError, match="close prices"):
+        DailyBacktester().run(open_prices, close_prices, targets)
 
 
 def test_stamp_duty_applies_to_sells_only() -> None:
